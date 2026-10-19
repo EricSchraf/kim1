@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html style="touch-action: manipulation;">
+<head>
+  <title>Online KIM-1 emulator</title>
+  <script src="js/7-segment-display/p5.min.js"></script>
+  <script src="js/7-segment-display/p5.dom.min.js"></script>
+  <meta name="viewport" content="user-scalable=0">
+
+  <script src="js/ASM/jquery.min.js"></script>
+
+  <!-- Bootstrap -->
+
+
+  <style>
+    :root {
+      --pcb: #15171a;
+      --pcb-edge: #0b0c0e;
+      --silk: #e6e6e0;
+      --case: #e9e7e1;
+      --case-shade: #c9c6bd;
+    }
+    html, body { margin: 0; padding: 0; }
+    body { background-color: #222222; font-family: "DejaVu Sans", Arial, sans-serif; }
+    .hideP { display: none; }
+
+    /* ---------- Boîtier + circuit imprimé ---------- */
+    .case {
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 10px 10px 14px;
+      background: linear-gradient(160deg, var(--case), var(--case-shade));
+      border-radius: 0 0 14px 14px;
+      box-shadow: inset 0 0 0 2px rgba(0,0,0,.08), 0 6px 18px rgba(0,0,0,.5);
+    }
+    .pcb {
+      position: relative;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(255,255,255,.05), transparent 60%),
+        var(--pcb);
+      border: 2px solid var(--pcb-edge);
+      border-radius: 6px;
+      padding: 0 0 18px;
+      overflow: hidden;
+    }
+    /* vis de fixation */
+    .screw {
+      position: absolute; width: 16px; height: 16px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #f2f2f2, #8a8a8a 70%);
+      box-shadow: 0 1px 2px rgba(0,0,0,.6);
+    }
+    .screw::after {
+      content: ""; position: absolute; left: 50%; top: 20%; width: 2px; height: 60%;
+      background: #444; transform: translateX(-50%) rotate(35deg);
+    }
+    .screw.tl { left: 8px; top: 8px; }
+    .screw.tr { right: 8px; top: 8px; }
+
+    .board-title {
+      color: var(--silk);
+      font-size: 22px;
+      font-style: italic;
+      letter-spacing: 1px;
+      margin: 12px 0 10px 30px;
+    }
+    .board-title small { font-size: 11px; opacity: .55; font-style: normal; margin-left: 8px; }
+
+    /* ---------- Afficheurs ---------- */
+    .display-wrap {
+      --data-start: 66.67%;   /* début de la zone DATA (les 2 derniers chiffres sur 6) : à ajuster si besoin */
+      position: relative;
+      background: #0a0a0a;
+      border-top: 3px solid #000;
+      border-bottom: 3px solid #000;
+      box-shadow: 0 4px 10px rgba(0,0,0,.6);
+      overflow: hidden;
+      line-height: 0;
+    }
+    .display-wrap canvas { display: block; }
+    /* le canvas garde toujours ses proportions : il est simplement agrandi/réduit */
+    .display-wrap canvas { width: 100% !important; height: 80% !important; }
+    /* zone DATA (2 derniers chiffres) : teinte verte par-dessus le rouge */
+    .data-tint {
+      position: absolute; top: 0; bottom: 0; right: 0;
+      left: var(--data-start);
+      background: #19ff5a;
+      mix-blend-mode: hue;
+      pointer-events: none;
+    }
+
+    /* petit rang de pastilles dorées sous l'afficheur */
+    .pads { display: flex; justify-content: center; gap: 6px; margin: 10px 0 6px; }
+    .pads i {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #f5e6a8, #b08d2a 70%);
+    }
+
+    /* ---------- Clavier ---------- */
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px 6px;
+      padding: 8px 12px 0;
+    }
+    .cell {
+      display: flex; flex-direction: row; align-items: center;
+      gap: 6px;
+      padding: 2px 0;
+    }
+    .cell .lbl {
+      color: var(--silk);
+      font-size: clamp(15px, 4.6vw, 24px);
+      font-weight: 500;
+      letter-spacing: .5px;
+      line-height: 1;
+      align-self: flex-start;
+      margin-top: 2px;
+      pointer-events: none;
+    }
+    /* interrupteur tactile : socle métal + capuchon noir */
+    .key {
+      position: relative;
+      flex: 0 0 56%; width: 56%;
+      aspect-ratio: 1 / 1;
+      border: 0; padding: 0; margin: 0;
+      border-radius: 5px;
+      background: linear-gradient(145deg, #d9d9d9, #8c8c8c);
+      box-shadow: 0 2px 3px rgba(0,0,0,.7), inset 0 0 0 1px rgba(255,255,255,.35);
+      -webkit-tap-highlight-color: transparent;
+      outline: none;
+      cursor: pointer;
+    }
+    .key::before { /* petits points de soudure aux coins */
+      content: ""; position: absolute; inset: 7px;
+      background:
+        radial-gradient(circle, #3a3a3a 0 3px, transparent 3.5px) top left / 100% 100% no-repeat;
+      opacity: 0;
+    }
+    .key .cap {
+      position: absolute; inset: 20%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 38% 32%, #4a4a4a, #111 62%);
+      box-shadow: 0 3px 4px rgba(0,0,0,.65), inset 0 1px 1px rgba(255,255,255,.2);
+      transition: transform .04s, box-shadow .04s;
+    }
+    .key:active .cap, .key.down .cap {
+      transform: translateY(2px) scale(.96);
+      box-shadow: 0 1px 1px rgba(0,0,0,.7), inset 0 1px 1px rgba(255,255,255,.1);
+    }
+    /* touches de la 1re ligne légèrement différentes (GO/ST/RS) */
+    .key.ctl { background: linear-gradient(145deg, #cfcfcf, #7d7d7d); }
+
+    /* Protection : si KIM-1.js modifie le style d'une touche (couleur, opacité, visibilité...)
+       lors d'un appui clavier, l'apparence de la touche reste inchangée. */
+    .key {
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      background: linear-gradient(145deg, #d9d9d9, #8c8c8c) !important;
+    }
+    .key.ctl { background: linear-gradient(145deg, #cfcfcf, #7d7d7d) !important; }
+    .key .cap {
+      display: block !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      background: radial-gradient(circle at 38% 32%, #4a4a4a, #111 62%) !important;
+    }
+
+    /* Touche enfoncée : capuchon rouge lumineux + halo, bien visible en vidéo */
+    .key.down, .key:active {
+      box-shadow: 0 0 0 3px rgba(255,60,40,.55), 0 0 16px 4px rgba(255,40,20,.75), inset 0 0 0 1px rgba(255,255,255,.35) !important;
+    }
+    .key.down .cap, .key:active .cap {
+      background: radial-gradient(circle at 38% 32%, #ff9a8a, #ff1e12 55%, #b00800) !important;
+      box-shadow: 0 1px 1px rgba(0,0,0,.7), 0 0 10px 2px rgba(255,40,20,.9), inset 0 1px 1px rgba(255,255,255,.3) !important;
+    }
+
+    /* ---------- Interrupteur SST ---------- */
+    .sst-switch {
+      position: relative; flex: 0 0 56%; width: 56%; aspect-ratio: 1/1;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .sst-switch .body {
+      width: 56%; height: 78%;
+      background: #0a0a0a; border-radius: 4px;
+      box-shadow: 0 2px 3px rgba(0,0,0,.7), inset 0 0 0 2px #2b2b2b;
+      position: relative;
+    }
+    .sst-switch .lever {
+      position: absolute; left: 14%; right: 14%; height: 44%;
+      bottom: 6%;
+      background: linear-gradient(#e0392f, #a3150e);
+      border-radius: 3px;
+      box-shadow: 0 2px 3px rgba(0,0,0,.6);
+      transition: bottom .12s, top .12s;
+    }
+    #SST { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 2; }
+    #SST:checked + .body .lever { bottom: 50%; }
+
+    /* ---------- Reste de la page ---------- */
+    .tools { display: flex; gap: 4px; max-width: 520px; margin: 6px auto 0; }
+    .tool-btn {
+      flex: 1 1 0; min-width: 0;
+      height: 70px;
+      background-color: #222222; color: #fff;
+      border: 1px solid #555; border-radius: 6px;
+      font-size: clamp(11px, 3.2vw, 18px);
+      line-height: 1.2;
+    }
+    .touchoff { touch-action: none; }
+  </style>
+</head>
+<body>
+  <div id="serial_monitor" class="hideP" style="width: 100%; height: 148px; background-color: #000000; color: #00FF00; border: 2px solid #aaffaa; padding: 5px; overflow-y: scroll; word-wrap: break-word; font-family: monospace; font-size: 16px;"></div>
+  <input id="toggleDisplayMode" type="checkbox" style="position: absolute; top: 0px; left: 0px; margin: 0px; margin-left: 7px; padding: 0px; width: 19px; height: 19px;" hidden/>
+
+  <!-- Emulator -->
+  <div class="case">
+    <div class="pcb">
+      <span class="screw tl"></span><span class="screw tr"></span>
+
+      <div class="board-title">KIM Uno<small>youtube.com/schraf</small></div>
+
+      <div class="display-wrap">
+        <div id='display' class="m-0 pt-0 pb-0"></div>
+        <div class="data-tint"></div>
+      </div>
+
+      <div class="pads"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+
+      <div class="keypad">
+        <!-- Ligne 1 -->
+        <div class="cell"><button id="GO" class="key ctl" ontouchstart="keypad(0x13);" ontouchend="lightdown(); char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">GO</span></div>
+        <div class="cell"><button id="ST" class="key ctl" ontouchstart="stop();" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">ST</span></div>
+        <div class="cell"><button id="RS" class="key ctl" ontouchstart="reset();" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">RS</span></div>
+        <div class="cell">
+          <div class="sst-switch">
+            <input id="SST" type="checkbox" onchange="single_step ^= 1"/>
+            <div class="body"><div class="lever"></div></div>
+          </div><span class="lbl">SST</span>
+        </div>
+
+        <!-- Ligne 2 -->
+        <div class="cell"><button id="AD" class="key" ontouchstart="keypad(0x10);" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">AD</span></div>
+        <div class="cell"><button id="DA" class="key" ontouchstart="keypad(0x11);" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">DA</span></div>
+        <div class="cell"><button id="PC" class="key" ontouchstart="keypad(0x14)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">PC</span></div>
+        <div class="cell"><button id="+" class="key" ontouchstart="keypad(0x12)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">+</span></div>
+
+        <!-- Ligne 3 -->
+        <div class="cell"><button id="C" class="key" ontouchstart="keypad(0x0c)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">C</span></div>
+        <div class="cell"><button id="D" class="key" ontouchstart="keypad(0x0d)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">D</span></div>
+        <div class="cell"><button id="E" class="key" ontouchstart="keypad(0x0e)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">E</span></div>
+        <div class="cell"><button id="F" class="key" ontouchstart="keypad(0x0f)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">F</span></div>
+
+        <!-- Ligne 4 -->
+        <div class="cell"><button id="8" class="key" ontouchstart="keypad(0x08)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">8</span></div>
+        <div class="cell"><button id="9" class="key" ontouchstart="keypad(0x09)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">9</span></div>
+        <div class="cell"><button id="A" class="key" ontouchstart="keypad(0x0a)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">A</span></div>
+        <div class="cell"><button id="B" class="key" ontouchstart="keypad(0x0b)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">B</span></div>
+
+        <!-- Ligne 5 -->
+        <div class="cell"><button id="4" class="key" ontouchstart="keypad(0x04)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">4</span></div>
+        <div class="cell"><button id="5" class="key" ontouchstart="keypad(0x05)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">5</span></div>
+        <div class="cell"><button id="6" class="key" ontouchstart="keypad(0x06)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">6</span></div>
+        <div class="cell"><button id="7" class="key" ontouchstart="keypad(0x07)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">7</span></div>
+
+        <!-- Ligne 6 -->
+        <div class="cell"><button id="0" class="key" ontouchstart="keypad(0x00)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">0</span></div>
+        <div class="cell"><button id="1" class="key" ontouchstart="keypad(0x01)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">1</span></div>
+        <div class="cell"><button id="2" class="key" ontouchstart="keypad(0x02)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">2</span></div>
+        <div class="cell"><button id="3" class="key" ontouchstart="keypad(0x03)" ontouchend="char_pending = 0x15;"><span class="cap"></span></button><span class="lbl">3</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tools">
+    <button id="fullscreen" class="tool-btn">FULLSCREEN</button>
+    <button id="load" class="tool-btn">IMPORT PAPER TAPE</button>
+    <button id="save" class="tool-btn">EXPORT PAPER TAPE</button>
+  </div>
+  <textarea id="program" style="width: 100%; height: 500px; font-family: monospace; font-size: 26px;"></textarea>
+
+  <script src="js/7-segment-display/Segment.js"></script>
+  <script src="js/7-segment-display/SegmentDisplay.js"></script>
+  <script src="js/6502_CPU/6502.dev.js"></script>
+  <script src="js/KIM-1/KIM-1.js"></script>
+  <script src="js/ASM/assembler.js"></script>
+  <script src="js/Converter/converter.js"></script>
+
+  <script>
+    // save program
+    $('#save').on('click', function() {
+      let from = parseInt(prompt("Enter start address:"));
+      let to = parseInt(prompt("Enter end address:"));
+      let numRecord = 0;
+      let ptp = '';
+      for (let addr = from; addr <= to; addr += 24) {
+        numRecord++;
+        let record = '';
+        let addrStr = addr.toString(16).padStart(4, '0').toUpperCase();
+        let bytes = RAM.slice(addr, addr+24);
+        record += ';18' + addrStr;
+        let checksum = 0x18 + parseInt(addrStr.slice(0,2), 16) + parseInt(addrStr.slice(2,4), 16);
+        for (let i = 0; i < bytes.length; i++) {
+          let byte = bytes[i].toString(16).padStart(2, '0').toUpperCase();
+          record += byte;
+          checksum += bytes[i];
+        }
+        checksum = checksum.toString(16).padStart(4, '0').toUpperCase();
+        record += checksum + '\r\n';
+        ptp += record;
+      }
+      summary = numRecord.toString(16).padStart(4, '0').toUpperCase();
+      summaryCheckSum = (parseInt(summary.slice(0,2), 16) + parseInt(summary.slice(2,4), 16)).toString(16).padStart(4, '0').toUpperCase();
+      ptp += ';00' + summary + summaryCheckSum;
+      $('#program').val(ptp);
+      alert('Find your paper tape in a text area below');
+    });
+
+    // load program
+    // Deux formats acceptés :
+    //  1) bande papier MOS standard : ;LLAAAA DD DD ... [checksum]   (LL = nb d'octets, AAAA = adresse)
+    //  2) format simple :  @AAAA DDDDDD...   puis éventuellement des lignes d'octets qui continuent
+    //     ex :  @0200 A90085F9A901
+    //           8502A940850108
+    $('#load').on('click', function() {
+      let lines = $('#program').val().split(/\r?\n/);
+      let first = null, total = 0, cur = null;
+      function put(addr, hex) {
+        hex = hex.replace(/[^0-9A-Fa-f]/g, '');
+        for (let j = 0; j + 1 < hex.length; j += 2) {
+          RAM[addr++] = parseInt(hex.substr(j, 2), 16);
+          total++;
+        }
+        return addr;
+      }
+      for (let k = 0; k < lines.length; k++) {
+        let line = lines[k].trim();
+        if (line === '') continue;
+        if (line[0] === ';') {                          // format standard
+          let count = parseInt(line.slice(1, 3), 16);
+          if (!count) continue;                         // ligne de fin ";00..."
+          let addr = parseInt(line.slice(3, 7), 16);
+          if (first === null) first = addr;
+          cur = put(addr, line.slice(7, 7 + count * 2));
+        } else if (line[0] === '@') {                   // format simple
+          let m = line.match(/^@\s*([0-9A-Fa-f]{1,4})\s*(.*)$/);
+          if (!m) continue;
+          let addr = parseInt(m[1], 16);
+          if (first === null) first = addr;
+          cur = put(addr, m[2]);
+        } else if (cur !== null && /^[0-9A-Fa-f\s]+$/.test(line)) {   // suite d'octets
+          cur = put(cur, line);
+        }
+      }
+      if (first === null) { alert('No valid paper tape record found'); return; }
+      alert(total + ' bytes uploaded to memory from 0x' + first.toString(16).padStart(4, '0').toUpperCase());
+    });
+
+    // is fullscreen
+    var full = false;
+
+    // exit fullscreen
+    document.addEventListener("webkitfullscreenchange", function() {
+      if (full) {
+        setTimeout(function() {
+          // display size
+DISPLAY_WIDTH = 380;
+DISPLAY_HEIGHT = 100;
+DISPLAY_TRANSFORM_WIDTH = DISPLAY_WIDTH / 225;
+DISPLAY_TRANSFORM_HEIGHT = DISPLAY_HEIGHT / 40;
+SEGMENT_WIDTH = 10;
+SEGMENT_HEIGHT = 20;
+SEGMENT_THICK = 8;
+SEGMENT_OFFSET = 28;
+          setup();
+
+          $('#fullscreen').show();
+          full = false;
+
+          // hide serial monitor
+          document.getElementById('serial_monitor').classList.toggle('hideP');
+
+          // show load/save
+          document.getElementById('load').classList.toggle('hideP');
+          document.getElementById('save').classList.toggle('hideP');
+          document.getElementById('program').classList.toggle('hideP');
+        }, 100);
+      }
+    });
+
+    // go fullscreen
+    $('#fullscreen').on('click', function(e) {
+      document.documentElement.webkitRequestFullscreen();
+      $('#fullscreen').hide();
+      setTimeout(() => {
+        // display size
+DISPLAY_WIDTH = 380;
+DISPLAY_HEIGHT = 100;
+DISPLAY_TRANSFORM_WIDTH = DISPLAY_WIDTH / 225;
+DISPLAY_TRANSFORM_HEIGHT = DISPLAY_HEIGHT / 40;
+SEGMENT_WIDTH = 10;
+SEGMENT_HEIGHT = 20;
+SEGMENT_THICK = 8;
+SEGMENT_OFFSET = 28;
+        setup();
+
+        full = true;
+
+        // show serial monitor
+        //document.getElementById('serial_monitor').classList.toggle('hideP');
+
+        // hide load/save
+        document.getElementById('load').classList.toggle('hideP');
+        document.getElementById('save').classList.toggle('hideP');
+        document.getElementById('program').classList.toggle('hideP');
+      }, 100);
+    });
+
+    // display size
+    // Taille fixe de référence (celle d'un téléphone). L'affichage est ensuite
+    // agrandi/réduit uniformément par le CSS, donc les LEDs gardent leurs proportions.
+    DISPLAY_WIDTH = 380;
+    DISPLAY_HEIGHT = 100;
+    DISPLAY_TRANSFORM_WIDTH = DISPLAY_WIDTH / 225;
+    DISPLAY_TRANSFORM_HEIGHT = DISPLAY_HEIGHT / 40;
+    SEGMENT_WIDTH = 10;
+    SEGMENT_HEIGHT = 20;
+    SEGMENT_THICK = 8;
+    SEGMENT_OFFSET = 28;
+
+    // disable scrolling
+    document.addEventListener('touchstart', this.touchstart);
+    document.addEventListener('touchmove', this.touchmove);
+    function touchstart(e) { e.preventDefault(); }
+    function touchmove(e) { e.preventDefault(); }
+
+    // init display
+    function setup() {
+      let cnv = createCanvas(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+      cnv.parent('display');
+      frameRate(60);
+      ssd1 = new SegmentDisplay("7"); ssd1.update();
+      ssd2 = new SegmentDisplay("7"); ssd2.update();
+      ssd3 = new SegmentDisplay("7"); ssd3.update();
+      ssd4 = new SegmentDisplay("7"); ssd4.update();
+      ssd5 = new SegmentDisplay("7"); ssd5.update();
+      ssd6 = new SegmentDisplay("7"); ssd6.update();
+    }
+
+    // update display
+    function draw() {
+      background(25);
+      ssd1.update();
+      ssd2.update();
+      ssd3.update();
+      ssd4.update();
+      ssd5.update();
+      ssd6.update();
+    }
+
+    // hack to light down LEDs before running a program
+    function lightdown() {
+      ssd1.displayDigit(0); ssd1.update();
+      ssd2.displayDigit(0); ssd2.update();
+      ssd3.displayDigit(0); ssd3.update();
+      ssd4.displayDigit(0); ssd4.update();
+      ssd5.displayDigit(0); ssd5.update();
+      ssd6.displayDigit(0); ssd6.update();
+    }
+
+    // helpers
+    function keypad(key) { char_pending = key; }
+    function resetCPU() { cpu.reset(); cpu.log(); }
+    function stepCPU() { cpu.step(); cpu.log(); }
+
+    // ---------- Clavier de l'ordinateur ----------
+    // 0-9, A-F : chiffres hexa      Espace : AD      . : DA      Entrée ou + : +
+    // G : GO      S : ST      R : RS      P : PC
+    // Chaque touche déclenche exactement le même code que le bouton à l'écran.
+    var KEYMAP = { ' ': 'AD', ',': 'DA', 'Enter': '+', '+': '+', 'g': 'GO', 's': 'ST', 'r': 'RS', 'p': 'PC' };
+    var heldKey = null;
+
+    function buttonFor(e) {
+      var k = e.key;
+      var id = KEYMAP[k] || KEYMAP[(k || '').toLowerCase()];
+      if (!id && /^[0-9a-fA-F]$/.test(k)) id = k.toUpperCase();
+      return id ? document.getElementById(id) : null;
+    }
+    function typingInField(e) {
+      var t = e.target;
+      return t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && t.type !== 'checkbox'));
+    }
+    // Le rouge reste affiché au moins 150 ms, même pour un appui très bref (utile pour filmer)
+    var MIN_HOLD = 150;
+    function pressVis(el) {
+      clearTimeout(el._rel);
+      el._t = Date.now();
+      el.classList.add('down');
+    }
+    function releaseVis(el) {
+      var wait = Math.max(0, MIN_HOLD - (Date.now() - (el._t || 0)));
+      clearTimeout(el._rel);
+      el._rel = setTimeout(function() { el.classList.remove('down'); }, wait);
+    }
+    document.querySelectorAll('.key').forEach(function(el) {
+      el.addEventListener('touchstart', function() { pressVis(el); });
+      el.addEventListener('touchend', function() { releaseVis(el); });
+      el.addEventListener('touchcancel', function() { releaseVis(el); });
+      el.addEventListener('mousedown', function() { pressVis(el); });
+      el.addEventListener('mouseup', function() { releaseVis(el); });
+      el.addEventListener('mouseleave', function() { releaseVis(el); });
+    });
+
+    document.addEventListener('keydown', function(e) {
+      if (e.ctrlKey || e.metaKey || e.altKey || typingInField(e)) return;
+      var el = buttonFor(e);
+      if (!el) return;
+      e.preventDefault();
+      if (e.repeat || heldKey) return;       // une seule touche à la fois, pas de répétition
+      heldKey = e.key;
+      pressVis(el);
+      new Function(el.getAttribute('ontouchstart'))();
+    });
+    document.addEventListener('keyup', function(e) {
+      if (e.key !== heldKey) return;
+      var el = buttonFor(e);
+      heldKey = null;
+      if (!el) return;
+      releaseVis(el);
+      new Function(el.getAttribute('ontouchend'))();
+    });
+
+    // Pour tester sur ordinateur : la souris simule le toucher
+    if (!('ontouchstart' in window)) {
+      document.querySelectorAll('.key').forEach(function(el) {
+        var down = el.getAttribute('ontouchstart');
+        var up = el.getAttribute('ontouchend');
+        el.addEventListener('mousedown', function() { new Function(down)(); });
+        el.addEventListener('mouseup', function() { new Function(up)(); });
+        el.addEventListener('mouseleave', function() { new Function(up)(); });
+      });
+    }
+  </script>
+</body>
+</html>
